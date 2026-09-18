@@ -2,7 +2,7 @@
   {
     "name": "Fullscreen Player",
     "description": "Fullscreen now-playing view with an audio-reactive ring visualizer, full-width spectrum bars, synced word-level lyrics, and Canvas/artist-image backdrops. Includes an optional local bridge for real audio reactivity via WASAPI capture.",
-    "preview": "docs/screenshot.png",
+    "preview": "docs/preview.gif",
     "main": "extension/fullscreenPlayer.js",
     "readme": "README.md",
     "authors": [
