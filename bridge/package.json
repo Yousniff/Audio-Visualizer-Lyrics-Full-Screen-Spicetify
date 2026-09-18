@@ -1,0 +1,21 @@
+{
+  "name": "spicetify-fullscreen-audio-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Captures Spotify's own audio output only (WASAPI per-process loopback, Windows), runs an FFT, and streams spectrum data to the Fullscreen Player Spicetify extension. Also proxies lyrics lookups that would otherwise be blocked by CORS.",
+  "main": "bridge.js",
+  "scripts": {
+    "start": "node bridge.js",
+    "debug": "node bridge.js --debug"
+  },
+  "dependencies": {
+    "loopback-capture": "^3.0.2",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32"
+  ]
+}
