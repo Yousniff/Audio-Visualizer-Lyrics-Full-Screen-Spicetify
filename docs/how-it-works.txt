@@ -1,0 +1,128 @@
+HOW THE AUDIO VISUALIZER WORKS
+Spicetify fullscreen player + local audio bridge
+===============================================
+
+Four stages, from your speakers to the rings.
+
+
+1. CAPTURE  (bridge.js, on Windows)
+-----------------------------------
+Spotify decodes audio natively, outside the browser engine, so nothing
+running inside the extension can see the waveform. That is the entire
+reason the bridge exists.
+
+  - Watches for Spotify.exe every 2 seconds (near-zero cost while idle).
+  - Finds the root Spotify process (the one whose parent is not also
+    Spotify) and attaches WASAPI per-process loopback to its process tree.
+  - Receives interleaved 16-bit PCM, 48 kHz stereo, of exactly what
+    Spotify is playing.
+
+Because the capture is bound to that process rather than to your output
+device, game audio, Discord, browser tabs and notifications are excluded
+automatically. Pausing Spotify flattens the rings even if other sound is
+playing.
+
+
+2. ANALYSIS  (bridge.js)
+------------------------
+  - Samples go into a ring buffer.
+  - Every 256 samples (the "hop"), the most recent 2048 samples are taken,
+    a Hann window is applied, and an FFT is run.
+      window  = 2048 samples = ~43 ms, giving ~23 Hz bins
+      hop     = 256 samples  = 188 analyses per second
+  - Magnitudes are summed into 28 logarithmically spaced bands from
+    40 Hz to 16 kHz, with a slight upward tilt so the highs are not
+    buried by bass energy.
+  - Each band is converted to dB and normalised against a floor and a
+    ceiling that track that band's own recent range, so a quiet master
+    still fills the rings and a loud one doesn't sit clipped flat.
+  - Noise gate at -55 dB: near-silent bands read as zero rather than
+    amplified room tone.
+  - 60 ms smoothing removes FFT frame-to-frame jitter at the source.
+  - Onset detection: spectral flux compared against a moving median,
+    with a 110 ms minimum gap between hits.
+
+Measured cost: about 0.105 ms per analysis cycle, 188 cycles per second,
+roughly 2% of one CPU core.
+
+
+3. TRANSPORT
+------------
+  - 28 band values, one overall energy value, and any onset flag are sent
+    as JSON over a WebSocket on ws://127.0.0.1:8787, capped at about
+    120 messages per second.
+  - The same process serves a small HTTP lyrics proxy on that port,
+    because the lyrics APIs send no CORS headers and a page cannot call
+    them directly, while a local process can.
+  - Nothing is exposed beyond 127.0.0.1.
+
+
+4. RENDERING  (fullscreenPlayer.js, inside Spotify)
+---------------------------------------------------
+Motion model
+  Every incoming value drives a spring-damper rather than a simple ease:
+
+      v += (-k * (x - target) - 2 * zeta * sqrt(k) * v) * dt
+      x += v * dt
+
+  with k = 800 and zeta = 0.65 for the bands. Measured response: 90% in
+  about 83 ms with a slight overshoot. The overshoot is what reads as
+  punch; the momentum is what makes jitter physically impossible, which
+  plain exponential smoothing could not do without also being laggy.
+
+Rings
+  - Three concentric rings drawn on canvas, 220 points each.
+  - Each samples the spectrum around its circumference, mirrored across
+    the vertical axis (bass at the top, treble at the bottom).
+  - Values are centred on their mean, so lobes push outward AND pull
+    inward; otherwise the whole circle just inflates.
+  - Radii are expressed as fractions of the space between the artwork
+    edge and the canvas edge, so they scale with whatever size the
+    artwork ends up and can never clip.
+  - The beat pulse scales only the artwork-hugging part of the radius.
+  - Colour comes from a palette sampled out of the album cover: the image
+    is drawn to a 40x40 offscreen canvas, pixels are bucketed into 12 hue
+    ranges, near-black and near-white are discarded, and up to five
+    colours spread around the wheel are used as a gradient.
+
+Spectrum bars
+  - 64 bars along the top and bottom edges, fed by the same band values.
+  - Folded so bass sits at both outer edges and treble meets in the
+    middle; a straight low-to-high ramp across a whole screen looks
+    lopsided with all the movement bunched at one end.
+  - Opacity and height both ride the band level.
+
+
+FALLBACK
+--------
+If the bridge is not running, the extension drops to a slow sine
+"breathing" motion after one second without packets, and retries the
+connection every four seconds. Nothing breaks; it simply stops being
+reactive.
+
+
+WHY NOT USE SPOTIFY'S OWN DATA
+------------------------------
+Spotify's audio-analysis service was removed from the desktop client
+(the Cosmos call returns "Resolver not found"), and the Web API
+equivalents were deprecated in November 2024 with no replacement for new
+applications. AcousticBrainz has beat grids but was frozen in 2022 and
+skews toward mainstream catalogue. Capturing the audio locally is the
+only approach with full coverage, and it yields a real spectrum rather
+than precomputed metadata.
+
+
+TUNING POINTS
+-------------
+  bridge.js
+    FFT_SIZE / HOP     window length and update rate
+    BANDS              band count (28)
+    GATE_DB            noise gate threshold (-55)
+    TAU_SPEC           source-side smoothing (0.06 s)
+    Math.pow(norm, X)  dynamic range expansion (1.35)
+
+  fullscreenPlayer.js
+    SPR_K / SPR_ZETA   ring stiffness and damping (800 / 0.65)
+    RINGS[]            per-ring gap, amplitude, width, alpha, speed, lobes
+    CANVAS_RATIO       canvas size vs artwork; smaller = bigger artwork
+    STEPS              points per ring (220) - lower this to cut CPU
