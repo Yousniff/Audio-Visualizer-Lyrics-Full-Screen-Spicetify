@@ -213,4 +213,4 @@ hosts — audio capture and the WebSocket/HTTP server are entirely local.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GNU GPLv3 — see [LICENSE](LICENSE).
