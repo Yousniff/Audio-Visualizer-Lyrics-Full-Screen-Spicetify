@@ -1,0 +1,15 @@
+// fullscreenPlayer.js — fullscreen now-playing view for Spicetify
+//
+// Artwork left with a live ring visualizer, blurred artwork backdrop,
+// context label, vertical volume, up-next card. Right half is deliberately
+// left empty for lyrics later.
+//
+// Reactivity comes from the local audio bridge (ws://127.0.0.1:8787), which
+// FFTs Spotify's own output. Without it the rings fall back to ambient motion.
+//
+// Install:
+//   copy to %appdata%\spicetify\Extensions\
+//   spicetify config extensions fullscreenPlayer.js
+//   spicetify apply
+//
+// Open with the topbar button or Ctrl+Shift+F. Esc closes.
