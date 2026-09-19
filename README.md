@@ -1,5 +1,7 @@
 # Fullscreen Player for Spicetify
 
+See [CHANGELOG.md](CHANGELOG.md) for recent updates.
+
 A fullscreen now-playing view: album art with a live, audio-reactive ring
 visualizer and full-width spectrum bars, synced (word-level, where available)
 lyrics, Canvas/artist-image backdrops, and a compact transport — built as a
