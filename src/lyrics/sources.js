@@ -9,6 +9,26 @@ import { PROXY } from "../config.js";
 import { titleOf, artistOf } from "../trackinfo.js";
 import { linesFromUnknown, normalizeLines, parseLRC, parseTTML } from "./parse.js";
 
+// The bridge is the intended, always-correct path when it's running (no
+// CORS concerns either way, since it's not a browser request). This tries
+// it first and only falls back to a direct request — for whichever
+// services actually allow one — if the bridge isn't there to answer.
+//
+// LRCLIB confirmed (via direct testing) to allow a direct browser request,
+// so it gets this fallback: lyrics still work with no bridge running at
+// all. BetterLyrics confirmed (same testing — an actual CORS error in the
+// browser's network panel, not a guess) to reject direct requests
+// outright, so it skips this entirely and only ever goes through the
+// bridge — trying direct first there would just be a guaranteed-failing
+// request on every single lookup, for nothing.
+async function fetchViaBridgeFirst(proxyUrl, directUrl) {
+  try {
+    return await fetch(proxyUrl);
+  } catch {
+    return fetch(directUrl);
+  }
+}
+
 // Borrow from another lyrics extension if one has already fetched this
 // track — same data, no second request, and the two views stay in step.
 export async function fromOtherExtension(item) {
@@ -148,6 +168,9 @@ export async function fromBetterLyrics(item) {
       d: String(Math.round((Spicetify.Player.getDuration() || 0) / 1000)),
     });
     try {
+      // Bridge-only, no direct fallback — confirmed via testing that a
+      // direct browser request to this API is flatly CORS-rejected, so
+      // trying it would just be a guaranteed-failing request every time.
       const r = await fetch(`${PROXY}/lyrics/ttml?${q}`);
       if (!r.ok) continue;            // 404 no match, 429 limited, 401 needs key
       const d = await r.json();
@@ -160,7 +183,7 @@ export async function fromBetterLyrics(item) {
         via: `BetterLyrics${d.score ? ` (${d.score})` : ""}`,
       };
     } catch {
-      return null;   // bridge not running — no point retrying the variants
+      return null;   // neither a direct request nor the bridge got through
     }
   }
   return null;
@@ -193,7 +216,7 @@ async function lrclibTry(title, artist, album, dur) {
   let plain = null;
 
   try {
-    const r = await fetch(`${PROXY}/lyrics/lrclib?${q}`);
+    const r = await fetchViaBridgeFirst(`${PROXY}/lyrics/lrclib?${q}`, `https://lrclib.net/api/get?${q}`);
     if (r.ok) {
       const d = await r.json();
       if (d.syncedLyrics) return { lines: parseLRC(d.syncedLyrics), synced: true, via: "LRCLIB" };
@@ -206,7 +229,7 @@ async function lrclibTry(title, artist, album, dur) {
       }
     }
   } catch {
-    return null;   // bridge/network problem — the search endpoint won't fare better
+    return null;   // neither a direct request nor the bridge got through
   }
 
   // The exact match either missed entirely or only had plain text — LRCLIB
@@ -216,8 +239,10 @@ async function lrclibTry(title, artist, album, dur) {
   // combination above didn't. Worth a search before settling for plain
   // text (or nothing).
   try {
-    const s = await fetch(
-      `${PROXY}/lyrics/lrclib-search?${new URLSearchParams({ track_name: title, artist_name: artist })}`
+    const sq = new URLSearchParams({ track_name: title, artist_name: artist });
+    const s = await fetchViaBridgeFirst(
+      `${PROXY}/lyrics/lrclib-search?${sq}`,
+      `https://lrclib.net/api/search?${sq}`
     );
     if (s.ok) {
       const list = await s.json();

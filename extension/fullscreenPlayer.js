@@ -15,7 +15,7 @@
 // Open with the topbar button or Ctrl+Shift+F. Esc closes.
 (() => {
   // src/config.js
-  var VERSION = "2026.09.20-settings43";
+  var VERSION = "2026.09.20-settings45";
   var PROXY = "http://127.0.0.1:8787";
 
   // src/state.js
@@ -2424,6 +2424,13 @@
   }
 
   // src/lyrics/sources.js
+  async function fetchViaBridgeFirst(proxyUrl, directUrl) {
+    try {
+      return await fetch(proxyUrl);
+    } catch {
+      return fetch(directUrl);
+    }
+  }
   async function fromOtherExtension(item) {
     const uri = item.uri;
     const id = uri.split(":").pop();
@@ -2587,7 +2594,7 @@
     });
     let plain = null;
     try {
-      const r = await fetch(`${PROXY}/lyrics/lrclib?${q}`);
+      const r = await fetchViaBridgeFirst(`${PROXY}/lyrics/lrclib?${q}`, `https://lrclib.net/api/get?${q}`);
       if (r.ok) {
         const d = await r.json();
         if (d.syncedLyrics) return { lines: parseLRC(d.syncedLyrics), synced: true, via: "LRCLIB" };
@@ -2603,8 +2610,10 @@
       return null;
     }
     try {
-      const s = await fetch(
-        `${PROXY}/lyrics/lrclib-search?${new URLSearchParams({ track_name: title, artist_name: artist })}`
+      const sq = new URLSearchParams({ track_name: title, artist_name: artist });
+      const s = await fetchViaBridgeFirst(
+        `${PROXY}/lyrics/lrclib-search?${sq}`,
+        `https://lrclib.net/api/search?${sq}`
       );
       if (s.ok) {
         const list = await s.json();

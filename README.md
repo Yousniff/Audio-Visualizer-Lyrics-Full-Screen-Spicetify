@@ -34,9 +34,9 @@ ambient motion instead of tracking the actual audio.
 - [Spicetify](https://spicetify.app) already installed and working
 - **For audio reactivity only:** Windows 10 (build 20348+) or Windows 11,
   and [Node.js](https://nodejs.org) 18 or later
-- Lyrics and artist-image backdrops work without the bridge, but the bridge
-  also proxies the lyrics lookups (see [Why a bridge?](#why-a-bridge)), so
-  lyrics are more reliable with it running
+- Artist-image backdrops and LRCLIB lyrics work without the bridge; Better
+  Lyrics (word/syllable-level timing) specifically requires it (see
+  [Why a bridge?](#why-a-bridge))
 
 ## Install — the extension
 
@@ -146,15 +146,17 @@ Windows' documented per-process WASAPI loopback API — the same mechanism
 [OBS uses for "application audio capture."](https://github.com/WerdoxDev/loopback-capture)
 via the `loopback-capture` npm package.
 
-**Lyrics.** The lyrics lookups this extension uses ([LRCLIB](https://lrclib.net)
-for line-level lyrics, and the [Better Lyrics API](https://lyrics-api-docs.boidu.dev)
-for word/syllable-level timing where available) don't send
-`Access-Control-Allow-Origin` headers, so a browser blocks Spotify's page
-from calling them directly. A local process has no such restriction, so the
-bridge also runs a tiny HTTP proxy on the same port and the extension routes
-lyrics requests through it. Without the bridge running, the extension still
-tries LRCLIB and any in-client lyrics API directly, but Better Lyrics
-requires the proxy and will fail outright without it.
+**Lyrics.** The bridge's small HTTP proxy on the same port is the primary
+path for both lyrics sources — it's always correct, since a local process
+has no CORS restriction of its own. [LRCLIB](https://lrclib.net) (line-level
+lyrics) additionally sends CORS headers that allow a browser to call it
+directly, confirmed via testing, so the extension falls back to a direct
+request if the bridge isn't running — LRCLIB works either way. The
+[Better Lyrics API](https://lyrics-api-docs.boidu.dev) (word/syllable-level
+timing where available) does not — a direct request from the page is
+blocked outright by CORS, also confirmed via testing (a real CORS error in
+the browser's network panel, not a guess) — so it only ever goes through
+the bridge and simply won't work if the bridge isn't running.
 
 Both are tried in priority order (real per-word timing first, then any
 synced line-level result) and only the best result found is kept — a synced

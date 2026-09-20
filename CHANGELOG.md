@@ -18,6 +18,19 @@ this project uses [Semantic Versioning](https://semver.org/).
   instead of guessed at.
 
 ### Fixed
+- **LRCLIB only ever worked through the bridge, despite the docs claiming
+  otherwise.** Every request was hardcoded to go through the local bridge
+  process — if it wasn't running, LRCLIB failed outright (a connection to a
+  closed local port), leaving only Spotify's own lyrics endpoint (hit-or-
+  miss coverage) and borrowing from another lyrics extension, if one
+  happened to be running. LRCLIB now tries the bridge first (still the
+  primary path, since it's confirmed to work) and falls back to a direct
+  request straight from the page — confirmed via testing to be allowed —
+  only if the bridge isn't there to answer. Better Lyrics was tried the
+  same way but confirmed (a real CORS error in the browser's network
+  panel, not a guess) to flatly reject direct requests, so it stays
+  bridge-only rather than wasting a guaranteed-failing request on every
+  lookup.
 - The auto (multi-provider) lyrics lookup didn't actually guarantee "only
   settle for worse lyrics if nothing better exists." It locked in the
   *first* provider to return any lines at all — so an early plain/unsynced
