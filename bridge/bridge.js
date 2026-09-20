@@ -235,8 +235,8 @@ async function spotifyRootPid() {
  * hands the result back with the header the browser wants.
  */
 
-async function proxyLyrics(url, extraHeaders) {
-  const r = await fetch(url, { headers: { Accept: "application/json", ...extraHeaders } });
+async function proxyLyrics(url) {
+  const r = await fetch(url, { headers: { Accept: "application/json" } });
   const body = await r.text();
   return { status: r.status, body };
 }
@@ -254,7 +254,6 @@ const server = http.createServer(async (req, res) => {
   }
 
   let target = null;
-  let extraHeaders = undefined;
   try {
     const u = new URL(req.url, "http://127.0.0.1");
     const q = u.searchParams;
@@ -265,18 +264,6 @@ const server = http.createServer(async (req, res) => {
       target = `https://lrclib.net/api/get?${q}`;
     } else if (u.pathname === "/lyrics/lrclib-search") {
       target = `https://lrclib.net/api/search?${q}`;
-    } else if (u.pathname === "/lyrics/netease-search") {
-      // NetEase Cloud Music's own web search — no key, no login. Licenses a
-      // surprising amount of Western catalog alongside its Chinese one, so
-      // it's worth trying when LRCLIB/BetterLyrics come up empty or
-      // unsynced. Some deployments 403 this endpoint without a same-site
-      // Referer, so that's sent along even though it's worked without one
-      // in testing so far.
-      target = `https://music.163.com/api/search/get/web?s=${encodeURIComponent(q.get("q") || "")}&type=1&offset=0&total=true&limit=8`;
-      extraHeaders = { Referer: "https://music.163.com/" };
-    } else if (u.pathname === "/lyrics/netease-lyric") {
-      target = `https://music.163.com/api/song/lyric?id=${encodeURIComponent(q.get("id") || "")}&lv=-1&kv=-1&tv=-1`;
-      extraHeaders = { Referer: "https://music.163.com/" };
     } else if (u.pathname === "/health") {
       res.writeHead(200, cors);
       return res.end(JSON.stringify({ ok: true, capturing: capturedPid }));
@@ -289,10 +276,22 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const out = await proxyLyrics(target, extraHeaders);
+    const out = await proxyLyrics(target);
+    if (DEBUG) {
+      // Trimmed to keep the terminal readable — this is a diagnostic, not
+      // a full response dump. Shows exactly what came back for each lyrics
+      // request: which upstream host, what status, and the first bit of
+      // whatever body it sent (JSON error, HTML challenge page, etc. all
+      // look different here, which a bare "0 lines" in the extension's own
+      // debug overlay can't tell apart).
+      console.log(
+        `[bridge] lyrics ${new URL(target).host}${new URL(target).pathname} -> ${out.status} ${out.body.slice(0, 200).replace(/\s+/g, " ")}`
+      );
+    }
     res.writeHead(out.status, cors);
     res.end(out.body);
   } catch (err) {
+    if (DEBUG) console.log(`[bridge] lyrics request failed: ${err?.message || err}`);
     res.writeHead(502, cors);
     res.end(JSON.stringify({ error: String(err?.message || err) }));
   }

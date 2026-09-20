@@ -10,10 +10,8 @@ is a quick reference for people already in this folder.
   loopback) — nothing else on your system is heard.
 - Runs an FFT and streams spectrum data to the extension over
   `ws://127.0.0.1:8787`.
-- Proxies three lyrics APIs on the same port so the extension can reach them
-  without hitting CORS: LRCLIB, a BetterLyrics/TTML wrapper, and NetEase
-  Cloud Music's own search+lyric API (a free, no-login third source that
-  often has synced lyrics the other two don't, even for Western tracks).
+- Proxies two lyrics APIs on the same port so the extension can reach them
+  without hitting CORS: LRCLIB and a BetterLyrics/TTML wrapper.
 - Only exists while Spotify is open (see the two launch options below).
 
 ## Setup
@@ -58,4 +56,7 @@ change `BRIDGE_URL` near the top of the lyrics/bridge section in
 **Lyrics still failing after the bridge starts.** Visit
 `http://127.0.0.1:8787/health` in a browser — it should return
 `{"ok":true, ...}`. If it doesn't, the bridge isn't running or isn't
-reachable on that port.
+reachable on that port. If the bridge is reachable but a specific track's
+lyrics never show up, run with `--debug` — every lyrics request now logs
+its target host, HTTP status, and a snippet of the response body, which
+tells you whether it's an upstream error, a bad match, or something else.

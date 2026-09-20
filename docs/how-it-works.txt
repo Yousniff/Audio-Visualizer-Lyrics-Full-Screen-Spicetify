@@ -52,9 +52,9 @@ roughly 2% of one CPU core.
     as JSON over a WebSocket on ws://127.0.0.1:8787, capped at about
     120 messages per second.
   - The same process serves a small HTTP lyrics proxy on that port,
-    because the lyrics APIs (LRCLIB, Better Lyrics, and NetEase Cloud
-    Music) send no CORS headers and a page cannot call them directly,
-    while a local process can.
+    because the lyrics APIs (LRCLIB and Better Lyrics) send no CORS
+    headers and a page cannot call them directly, while a local process
+    can.
   - Nothing is exposed beyond 127.0.0.1.
 
 

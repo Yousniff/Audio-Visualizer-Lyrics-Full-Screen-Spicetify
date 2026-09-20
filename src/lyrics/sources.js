@@ -225,8 +225,15 @@ async function lrclibTry(title, artist, album, dur) {
         .filter((x) => x.syncedLyrics)
         .sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))[0];
       // Allow a wider duration window than the exact lookup, but not so wide
-      // that a different edit gets synced against this one.
-      if (best && Math.abs((best.duration || 0) - dur) <= 12) {
+      // that a different edit (a radio cut, a different version) gets
+      // synced against this one — those tend to differ by 10s+, while the
+      // same recording's different releases/remasters are usually within a
+      // couple of seconds (fade trims, mastering differences). 5s catches
+      // the latter without inviting the former; the previous 12s window
+      // was letting through matches that felt "off" throughout the whole
+      // track rather than wrong outright, since they still passed the
+      // plausible() gross-mismatch check below.
+      if (best && Math.abs((best.duration || 0) - dur) <= 5) {
         return { lines: parseLRC(best.syncedLyrics), synced: true, via: "LRCLIB search" };
       }
     }
@@ -250,64 +257,16 @@ export function plausible(lines) {
   return true;
 }
 
-// NetEase Cloud Music's own web API, reached through the bridge the same
-// way LRCLIB/BetterLyrics are — no key, no login, and (despite being a
-// Chinese service) it licenses a huge amount of Western catalog too, so it
-// turns up synced lyrics some tracks simply don't have on LRCLIB or
-// BetterLyrics. Two calls: search by title+artist to find NetEase's own
-// song id, then fetch that id's lyric, which comes back as plain LRC text
-// — same format parseLRC() already handles for LRCLIB.
-export async function fromNetease(item) {
-  const title = titleOf(item);
-  const artist = (artistOf(item).split(",")[0] || "").trim();
-  const dur = Math.round((Spicetify.Player.getDuration() || 0) / 1000);
-  if (!title || !artist) return null;
-
-  for (const variant of titleVariants(title)) {
-    try {
-      const sq = new URLSearchParams({ q: `${variant} ${artist}` });
-      const sr = await fetch(`${PROXY}/lyrics/netease-search?${sq}`);
-      if (!sr.ok) continue;
-      const sd = await sr.json();
-      const songs = sd?.result?.songs || [];
-      if (!songs.length) continue;
-
-      // NetEase's search is fuzzy and can surface an unrelated track with a
-      // similar title — prefer results whose artist actually matches
-      // before falling back to whatever came back.
-      const artistLower = artist.toLowerCase();
-      const matchingArtist = (s) =>
-        (s.artists || []).some(
-          (a) =>
-            (a.name || "").toLowerCase().includes(artistLower) ||
-            artistLower.includes((a.name || "").toLowerCase())
-        );
-      const pool = songs.filter(matchingArtist);
-      const candidates = pool.length ? pool : songs;
-
-      const best = candidates
-        .map((s) => ({ s, diff: Math.abs((s.duration || 0) / 1000 - dur) }))
-        .sort((a, b) => a.diff - b.diff)[0];
-      // Same reasoning as LRCLIB's search fallback: a close duration match
-      // is the best signal available that this is actually the same
-      // recording rather than a cover, remix, or unrelated song.
-      if (!best || best.diff > 12) continue;
-
-      const lq = new URLSearchParams({ id: String(best.s.id) });
-      const lr = await fetch(`${PROXY}/lyrics/netease-lyric?${lq}`);
-      if (!lr.ok) continue;
-      const ld = await lr.json();
-      const lrc = ld?.lrc?.lyric;
-      if (!lrc) continue;
-      const lines = parseLRC(lrc);
-      if (lines?.length) return { lines, synced: true, via: "NetEase" };
-    } catch {
-      return null;   // bridge/network problem — no point trying other variants
-    }
-  }
-  return null;
-}
-
 // Which provider to use. "auto" walks the chain; the others force one, so a
 // bad match on one source can be skipped without touching the others.
-export const PROVIDERS = ["auto", "lrclib", "betterlyrics", "netease"];
+//
+// NetEase Cloud Music was tried here as a third source (same idea as
+// LRCLIB/BetterLyrics: no key, no login, and a surprising amount of
+// Western catalog alongside its Chinese one) but was removed — its web
+// search endpoint returns an encrypted response body, not plain JSON, as
+// part of NetEase's standard anti-scraping scheme. Reading it for real
+// would mean implementing (and maintaining) their reverse-engineered
+// AES/RSA scheme, which is a materially bigger and more fragile commitment
+// than anything else in this chain, for a source that turned out not to be
+// the free-lunch API it first looked like.
+export const PROVIDERS = ["auto", "lrclib", "betterlyrics"];

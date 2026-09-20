@@ -15,7 +15,7 @@
 // Open with the topbar button or Ctrl+Shift+F. Esc closes.
 (() => {
   // src/config.js
-  var VERSION = "2026.09.20-settings41";
+  var VERSION = "2026.09.20-settings43";
   var PROXY = "http://127.0.0.1:8787";
 
   // src/state.js
@@ -2609,7 +2609,7 @@
       if (s.ok) {
         const list = await s.json();
         const best = list.filter((x) => x.syncedLyrics).sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))[0];
-        if (best && Math.abs((best.duration || 0) - dur) <= 12) {
+        if (best && Math.abs((best.duration || 0) - dur) <= 5) {
           return { lines: parseLRC(best.syncedLyrics), synced: true, via: "LRCLIB search" };
         }
       }
@@ -2627,42 +2627,7 @@
     if (firstTime > dur * 0.5 && lines.length > 4) return false;
     return true;
   }
-  async function fromNetease(item) {
-    const title = titleOf(item);
-    const artist = (artistOf(item).split(",")[0] || "").trim();
-    const dur = Math.round((Spicetify.Player.getDuration() || 0) / 1e3);
-    if (!title || !artist) return null;
-    for (const variant of titleVariants(title)) {
-      try {
-        const sq = new URLSearchParams({ q: `${variant} ${artist}` });
-        const sr = await fetch(`${PROXY}/lyrics/netease-search?${sq}`);
-        if (!sr.ok) continue;
-        const sd = await sr.json();
-        const songs = sd?.result?.songs || [];
-        if (!songs.length) continue;
-        const artistLower = artist.toLowerCase();
-        const matchingArtist = (s) => (s.artists || []).some(
-          (a) => (a.name || "").toLowerCase().includes(artistLower) || artistLower.includes((a.name || "").toLowerCase())
-        );
-        const pool = songs.filter(matchingArtist);
-        const candidates = pool.length ? pool : songs;
-        const best = candidates.map((s) => ({ s, diff: Math.abs((s.duration || 0) / 1e3 - dur) })).sort((a, b) => a.diff - b.diff)[0];
-        if (!best || best.diff > 12) continue;
-        const lq = new URLSearchParams({ id: String(best.s.id) });
-        const lr = await fetch(`${PROXY}/lyrics/netease-lyric?${lq}`);
-        if (!lr.ok) continue;
-        const ld = await lr.json();
-        const lrc = ld?.lrc?.lyric;
-        if (!lrc) continue;
-        const lines = parseLRC(lrc);
-        if (lines?.length) return { lines, synced: true, via: "NetEase" };
-      } catch {
-        return null;
-      }
-    }
-    return null;
-  }
-  var PROVIDERS = ["auto", "lrclib", "betterlyrics", "netease"];
+  var PROVIDERS = ["auto", "lrclib", "betterlyrics"];
 
   // src/lyrics/view.js
   var lyrics = [];
@@ -2766,12 +2731,10 @@
       result = await fromLrclib(item);
     } else if (mode === "betterlyrics") {
       result = await fromBetterLyrics(item);
-    } else if (mode === "netease") {
-      result = await fromNetease(item);
     } else {
       let bestSynced = null;
       let bestUnsynced = null;
-      for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, fromNetease]) {
+      for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib]) {
         const r = await fn(item);
         if (!r?.lines?.length) continue;
         if (r.words) {

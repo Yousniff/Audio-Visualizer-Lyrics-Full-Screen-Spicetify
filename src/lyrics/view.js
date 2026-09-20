@@ -13,7 +13,7 @@ import { clamp } from "../utils.js";
 import { spring } from "../motion.js";
 import { icons } from "../icons.js";
 import {
-  PROVIDERS, fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, fromNetease, plausible,
+  PROVIDERS, fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, plausible,
 } from "./sources.js";
 
 let lyrics = [];            // [{ time: seconds, text }]
@@ -146,21 +146,19 @@ export async function loadLyrics(item) {
     result = await fromLrclib(item);
   } else if (mode === "betterlyrics") {
     result = await fromBetterLyrics(item);
-  } else if (mode === "netease") {
-    result = await fromNetease(item);
   } else {
     // Priority order: real per-word timing beats any line-level result,
-    // and — since unsynced results are hidden outright (see below) —  any
+    // and — since unsynced results are hidden outright (see below) — any
     // *synced* line-level result has to beat an unsynced one too, from
     // whichever provider it came from. Without that second distinction, an
     // early unsynced hit (say, LRCLIB's plain text) would lock in as
-    // "found something" and a later provider's synced result (NetEase,
-    // say) would be fetched and then thrown away for no reason. Only
-    // settles for unsynced text if literally nothing synced turned up
-    // anywhere in the chain.
+    // "found something" even if a later provider had a synced result that
+    // would've been fetched and thrown away for no reason. Only settles
+    // for unsynced text if literally nothing synced turned up anywhere in
+    // the chain.
     let bestSynced = null;
     let bestUnsynced = null;
-    for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, fromNetease]) {
+    for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib]) {
       const r = await fn(item);
       if (!r?.lines?.length) continue;
       if (r.words) { result = r; break; }

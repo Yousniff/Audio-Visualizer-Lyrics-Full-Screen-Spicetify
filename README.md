@@ -120,7 +120,7 @@ closes.
 | F | Toggle real fullscreen (hides Spotify's window chrome) |
 | [ / ] | Nudge lyric sync for the current track (saved per track) |
 | \\ | Reset lyric sync for the current track |
-| L | Cycle the lyrics source for the current track (auto / LRCLIB / Better Lyrics / NetEase) |
+| L | Cycle the lyrics source for the current track (auto / LRCLIB / Better Lyrics) |
 | + / - | Resize lyrics (or drag the slider next to the artwork) |
 | D | Toggle a debug readout (bridge status, lyrics source, timings) |
 
@@ -147,22 +147,25 @@ Windows' documented per-process WASAPI loopback API — the same mechanism
 via the `loopback-capture` npm package.
 
 **Lyrics.** The lyrics lookups this extension uses ([LRCLIB](https://lrclib.net)
-for line-level lyrics, the [Better Lyrics API](https://lyrics-api-docs.boidu.dev)
-for word/syllable-level timing where available, and
-[NetEase Cloud Music](https://music.163.com)'s own search+lyric API as a
-third source) don't send `Access-Control-Allow-Origin` headers, so a browser
-blocks Spotify's page from calling them directly. A local process has no
-such restriction, so the bridge also runs a tiny HTTP proxy on the same port
-and the extension routes lyrics requests through it. Without the bridge
-running, the extension still tries LRCLIB and any in-client lyrics API
-directly, but Better Lyrics and NetEase both require the proxy and will fail
-outright without it.
+for line-level lyrics, and the [Better Lyrics API](https://lyrics-api-docs.boidu.dev)
+for word/syllable-level timing where available) don't send
+`Access-Control-Allow-Origin` headers, so a browser blocks Spotify's page
+from calling them directly. A local process has no such restriction, so the
+bridge also runs a tiny HTTP proxy on the same port and the extension routes
+lyrics requests through it. Without the bridge running, the extension still
+tries LRCLIB and any in-client lyrics API directly, but Better Lyrics
+requires the proxy and will fail outright without it.
 
-All three are tried in priority order (real per-word timing first, then any
-synced line-level result, in the order above) and only the best result found
-across all of them is kept — a synced result from a later source always
-wins over an unsynced one from an earlier source. Lyrics with no timing at
-all are treated as if none were found, rather than shown as static text.
+Both are tried in priority order (real per-word timing first, then any
+synced line-level result) and only the best result found is kept — a synced
+result always wins over an unsynced one, regardless of which source found
+it. Lyrics with no timing at all are treated as if none were found, rather
+than shown as static text.
+
+(A NetEase Cloud Music source was tried here too, but removed — its search
+API returns an encrypted response body rather than plain JSON, which would
+require implementing and maintaining NetEase's own reverse-engineered
+crypto scheme to use for real.)
 
 ## What's inside
 
@@ -194,7 +197,7 @@ In the interest of being upfront about exactly what this runs:
   hand, which is the main thing that makes a native dependency trustworthy.
   It is, however, a low-usage project from one author. Look at it yourself
   before installing if that matters to you; the bridge does nothing else
-  with elevated privilege or network access beyond this and the three
+  with elevated privilege or network access beyond this and the two
   lyrics APIs below.
 - **[LRCLIB](https://lrclib.net)** — a free, community-run lyrics database
   that explicitly welcomes third-party API use. No key required.
@@ -202,17 +205,10 @@ In the interest of being upfront about exactly what this runs:
   API providing word/syllable-level timing (TTML) where available. Please
   be considerate with request volume if this project gets popular; it's
   someone else's free service.
-- **[NetEase Cloud Music](https://music.163.com)** — a free, no-login public
-  search+lyric API, used as a third fallback source. It's a Chinese
-  service, but its catalog also licenses a large amount of Western music,
-  so it can turn up synced lyrics the other two don't have for a given
-  track. No key required, but it's an undocumented consumer API rather than
-  one meant for third-party use, so it could change or rate-limit without
-  notice.
 
 None of the above requires a Spotify account token, login credentials, or
 anything beyond track title/artist/duration to look up lyrics, and the
-bridge makes no outbound network connections other than to these three
+bridge makes no outbound network connections other than to these two
 lyrics hosts — audio capture and the WebSocket/HTTP server are entirely
 local.
 
@@ -221,13 +217,13 @@ local.
 - **Windows only**, for the audio bridge. macOS/Linux users get the full UI,
   lyrics, and artist backdrops, just not audio-reactive rings — per-process
   loopback capture is a Windows-specific API.
-- **Lyrics coverage varies.** All three lyrics sources are community- or
-  reverse-engineered, and strongest on well-known, older, or chart-popular
-  music. Obscure or very recent tracks may have no synced lyrics anywhere,
-  or occasionally match a different edit of a track — press **L** to try
-  another source, or **[** / **]** to nudge the offset if the match is
-  right but shifted. Tracks with only unsynced (plain-text) lyrics
-  available show no lyrics at all rather than static text.
+- **Lyrics coverage varies.** Both lyrics sources are community-maintained
+  and strongest on well-known, older, or chart-popular music. Obscure or
+  very recent tracks may have no synced lyrics anywhere, or occasionally
+  match a different edit of a track — press **L** to try another source,
+  or **[** / **]** to nudge the offset if the match is right but shifted.
+  Tracks with only unsynced (plain-text) lyrics available show no lyrics
+  at all rather than static text.
 - **Artist-image backdrops use an internal, undocumented Spotify GraphQL
   endpoint.** This can change or break on a Spotify update without notice;
   the extension fails silently back to a blurred cover in that case. (An

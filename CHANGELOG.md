@@ -7,30 +7,36 @@ this project uses [Semantic Versioning](https://semver.org/).
 ## [1.2.0] - 2026-09-20
 
 ### Added
-- **NetEase Cloud Music as a third lyrics source** (requires the updated
-  `bridge.js` — see the audio-bridge folder's own changelog note). A free,
-  no-login API that licenses a large amount of Western catalog alongside
-  its Chinese one, so it can turn up synced lyrics that LRCLIB and
-  BetterLyrics don't have for a given track.
 - Gear icon now stays clear of the "Playing from" card on short/small
   windows — it used to sit a fixed distance above the artwork regardless
   of available space, which could push it under the card on a small
   monitor. It now measures the card's actual position and never renders
   above it.
+- The audio bridge now logs each lyrics proxy request under `--debug`
+  (target host, HTTP status, and a snippet of the response body), so a
+  "no lyrics found" report can actually be diagnosed from the terminal
+  instead of guessed at.
 
 ### Fixed
 - The auto (multi-provider) lyrics lookup didn't actually guarantee "only
   settle for worse lyrics if nothing better exists." It locked in the
   *first* provider to return any lines at all — so an early plain/unsynced
   hit (say, from LRCLIB) could win outright, even when a later provider
-  (say, the new NetEase source) went on to fetch real synced lyrics for the
-  same track, which were then silently thrown away. Now tracks the best
-  synced result and the best unsynced result separately, so any synced
-  result — from any provider, in priority order — always wins over an
-  unsynced one, and unsynced text is only used when nothing synced turned
-  up anywhere in the chain.
+  went on to fetch a real synced result for the same track, which was then
+  silently thrown away. Now tracks the best synced result and the best
+  unsynced result separately, so any synced result — from any provider, in
+  priority order — always wins over an unsynced one, and unsynced text is
+  only used when nothing synced turned up anywhere in the chain.
 
 ### Changed
+- LRCLIB's search-fallback duration match narrowed from a 12-second
+  tolerance to 5 seconds. The wider window was letting through a different
+  edit of a track (a radio cut, a different remaster) whose length happened
+  to be close but whose timings were shifted throughout — which read as
+  "lyrics are a bit off the whole song," not as an outright wrong match, so
+  it wasn't caught by the existing gross-mismatch check. 5 seconds still
+  allows for ordinary fade/mastering differences between releases of the
+  same recording.
 - LRCLIB lookups no longer stop at an exact match that only has plain
   (unsynced) text — they now also check LRCLIB's search index for a
   different catalog entry (a different release/remaster) that might have
