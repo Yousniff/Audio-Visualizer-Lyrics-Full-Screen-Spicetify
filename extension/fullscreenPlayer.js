@@ -15,7 +15,7 @@
 // Open with the topbar button or Ctrl+Shift+F. Esc closes.
 (() => {
   // src/config.js
-  var VERSION = "2026.09.19-settings36";
+  var VERSION = "2026.09.20-settings41";
   var PROXY = "http://127.0.0.1:8787";
 
   // src/state.js
@@ -67,13 +67,26 @@
   }
   .fsp-root.fsp-open  { display: block; }
   .fsp-root.fsp-shown { opacity: 1; }
-  .fsp-root.fsp-idle  { cursor: none; }
+  /* Idle hides the cursor entirely \u2014 meant for real OS fullscreen, where
+     there's nothing left to click anyway. In windowed mode it was doing
+     the same thing and quietly working against dragging the window: with
+     no visible cursor, the first grab attempt after being idle for a
+     couple seconds is aimed blind, and if it lands a few pixels off the
+     drag strip it just silently fails with no feedback \u2014 which reads as
+     "sometimes it lets me grab it, sometimes it doesn't" even though
+     nothing is actually random about it. Scoped to real fullscreen only. */
+  .fsp-root.fsp-fs.fsp-idle { cursor: none; }
   .fsp-root.fsp-idle .fsp-chrome { opacity: 0; }
 
   /* Window dragging: the overlay covers Spotify's drag region, so put it back.
      Spotify's own minimise/maximise/close draw above the page in the top-right,
-     so that corner is kept clear. */
-  .fsp-drag { position: absolute; top: 0; left: 0; right: 180px; height: 52px; -webkit-app-region: drag; }
+     so that corner is kept clear. Taller than the "Playing from" card alone
+     (which was the whole visible target before) so there's real margin for
+     error above/around it \u2014 anything actually clickable in this band (the
+     gear button, once the panel's open) stays reachable regardless, since
+     a no-drag element always wins over a draggable ancestor region behind
+     it for its own bounds. */
+  .fsp-drag { position: absolute; top: 0; left: 0; right: 180px; height: 90px; -webkit-app-region: drag; }
   .fsp-root button, .fsp-root .fsp-hit { -webkit-app-region: no-drag; }
   /* The "Playing from" label sits on top of .fsp-drag (same top-left
      corner) but, being a plain div with no app-region of its own, it
@@ -1349,6 +1362,261 @@
     }
   }
 
+  // src/render.js
+  var CANVAS_RATIO = 1.62;
+  var shadeCtx = document.createElement("canvas").getContext("2d");
+  function tint(css, factor) {
+    if (!css || factor === 1) return css;
+    shadeCtx.fillStyle = css;
+    const norm = shadeCtx.fillStyle;
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(norm);
+    if (!m) return css;
+    const [r, g, b] = [1, 2, 3].map((i) => clamp(Math.round(parseInt(m[i], 16) * factor), 0, 255));
+    return `rgb(${r},${g},${b})`;
+  }
+  function rgbToHsv(r, g, b) {
+    r /= 255;
+    g /= 255;
+    b /= 255;
+    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
+    let h = 0;
+    if (d !== 0) {
+      if (max === r) h = (g - b) / d % 6;
+      else if (max === g) h = (b - r) / d + 2;
+      else h = (r - g) / d + 4;
+      h *= 60;
+      if (h < 0) h += 360;
+    }
+    return [h, max === 0 ? 0 : d / max, max];
+  }
+  function hsvToRgb(h, s, v) {
+    const c = v * s, x = c * (1 - Math.abs(h / 60 % 2 - 1)), m = v - c;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) [r, g, b] = [c, x, 0];
+    else if (h < 120) [r, g, b] = [x, c, 0];
+    else if (h < 180) [r, g, b] = [0, c, x];
+    else if (h < 240) [r, g, b] = [0, x, c];
+    else if (h < 300) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
+  }
+  function brighten(css, factor) {
+    if (!css || factor === 1) return css;
+    shadeCtx.fillStyle = css;
+    const norm = shadeCtx.fillStyle;
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(norm);
+    if (!m) return css;
+    const [h, s, v] = rgbToHsv(parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16));
+    const [r, g, b] = hsvToRgb(h, s, clamp(v * factor, 0, 1));
+    return `rgb(${r},${g},${b})`;
+  }
+  function paintColor(css, viz) {
+    return tint(brighten(css, viz.artValueBrightness), viz.artTint);
+  }
+  function warp(t, spread) {
+    return clamp(0.5 + (t - 0.5) * spread, 0, 1);
+  }
+  function gradientStops(viz) {
+    if (viz.colorMode === "custom") {
+      const colors = customColors();
+      return colors.map((c, i) => [colors.length > 1 ? i / (colors.length - 1) : 0, c]);
+    }
+    if (!S.palette || S.palette.length < 2) return null;
+    return S.palette.map((c, i) => [
+      warp(i / (S.palette.length - 1), viz.paletteSpread),
+      paintColor(c, viz)
+    ]);
+  }
+  function resize() {
+    root.classList.toggle("fsp-fs", !!document.fullscreenElement);
+    resizeSpectrum();
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const cardH = (el.meta?.offsetHeight || 110) + 22;
+    const below = 18;
+    const region = Math.max(200, vh - cardH);
+    root.style.setProperty("--fsp-stage-top", `${Math.round(region / 2)}px`);
+    let side = Math.min(vw * 0.48, region - below);
+    side = clamp(side, 150, 980);
+    S.artSize = Math.floor(clamp(side / CANVAS_RATIO, 90, 560));
+    root.style.setProperty("--fsp-art", `${S.artSize}px`);
+    side = Math.floor(S.artSize * CANVAS_RATIO);
+    root.style.setProperty("--fsp-band", `${Math.round((side - S.artSize) / 2)}px`);
+    const dpr = window.devicePixelRatio || 1;
+    el.wrap.style.width = el.wrap.style.height = `${side}px`;
+    el.canvas.width = side * dpr;
+    el.canvas.height = side * dpr;
+    el.canvas.style.width = el.canvas.style.height = `${side}px`;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    requestAnimationFrame(() => {
+      const art = el.art?.getBoundingClientRect();
+      if (!art?.width) return;
+      root.style.setProperty("--fsp-lsz-left", `${Math.round(art.right + 30)}px`);
+      const volW = el.volWrap?.getBoundingClientRect().width || 0;
+      root.style.setProperty("--fsp-vol-left", `${Math.round(art.left - 30 - volW)}px`);
+      const contextBottom = el.context?.getBoundingClientRect().bottom || 0;
+      const minGearTop = contextBottom + 10;
+      const idealGearTop = art.top - 48;
+      root.style.setProperty("--fsp-gear-top", `${Math.round(Math.max(idealGearTop, minGearTop))}px`);
+    });
+  }
+  function focusedIndexRanges() {
+    return freqRanges().map(([lo, hi]) => {
+      const iLo = Math.floor(lo * (S.N - 1));
+      const iHi = Math.max(iLo + 1, Math.min(S.N - 1, Math.ceil(hi * (S.N - 1))));
+      return [iLo, iHi];
+    });
+  }
+  function sampleBand(t) {
+    const ranges = focusedIndexRanges();
+    const lens = ranges.map(([iLo, iHi]) => iHi - iLo);
+    const total = lens.reduce((a, b) => a + b, 0) || 1;
+    let pos = clamp(t, 0, 1) * total;
+    for (let r = 0; r < ranges.length; r++) {
+      const [iLo, iHi] = ranges[r];
+      const len = lens[r];
+      if (pos <= len || r === ranges.length - 1) {
+        const local = iLo + clamp(pos, 0, len);
+        const i = Math.floor(local), j = Math.min(iHi, i + 1);
+        return lerp(S.bands[i] ?? 0, S.bands[j] ?? 0, local - i);
+      }
+      pos -= len;
+    }
+    return 0;
+  }
+  function bandAt(angle) {
+    let a = angle % (Math.PI * 2);
+    if (a > Math.PI) a = Math.PI * 2 - a;
+    const v = sampleBand(a / Math.PI);
+    const indices = /* @__PURE__ */ new Set();
+    for (const [iLo, iHi] of focusedIndexRanges()) {
+      for (let k = iLo; k <= iHi; k++) indices.add(k);
+    }
+    let mean = 0;
+    for (const k of indices) mean += S.bands[k];
+    return v - mean / (indices.size || 1);
+  }
+  var RINGS = [
+    { gap: 0.08, amp: 0.3, width: 2.2, alpha: 0.9, speed: 0.22, lobes: 1 },
+    { gap: 0.28, amp: 0.36, width: 1.5, alpha: 0.5, speed: -0.14, lobes: 2 },
+    { gap: 0.46, amp: 0.32, width: 1.1, alpha: 0.26, speed: 0.08, lobes: 3 }
+  ];
+  function ringPaint(ctx2, c, radius, ring) {
+    const viz = getVizSettings();
+    const stops = gradientStops(viz);
+    if (!stops) return paintColor(S.accent, viz);
+    if (stops.length === 1) return stops[0][1];
+    const dir = viz.lockRotationDirection ? 1 : ring.speed > 0 ? 1 : -1;
+    const a = S.rotation * 0.25 * dir;
+    const g = ctx2.createLinearGradient(
+      c + Math.cos(a) * radius,
+      c + Math.sin(a) * radius,
+      c - Math.cos(a) * radius,
+      c - Math.sin(a) * radius
+    );
+    stops.forEach(([pos, col]) => g.addColorStop(pos, col));
+    return g;
+  }
+  var specCanvas = root.querySelector(".fsp-spectrum");
+  var sctx = specCanvas.getContext("2d");
+  var BAR_GAP = 3;
+  var hasRoundRect = typeof sctx.roundRect === "function";
+  function resizeSpectrum() {
+    const dpr = window.devicePixelRatio || 1;
+    specCanvas.width = window.innerWidth * dpr;
+    specCanvas.height = window.innerHeight * dpr;
+    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  function bandLerp(t) {
+    return sampleBand(t);
+  }
+  function drawSpectrum() {
+    const viz = getVizSettings();
+    const w = window.innerWidth, h = window.innerHeight;
+    sctx.clearRect(0, 0, w, h);
+    const bars = Math.max(24, Math.min(160, Math.floor(w / 16 * viz.barDensity)));
+    const barW = w / bars - BAR_GAP;
+    const maxH = Math.min(h * 0.22, 230) * viz.barHeight;
+    const stops = gradientStops(viz);
+    let paint = paintColor(S.accent, viz);
+    if (stops) {
+      if (stops.length === 1) {
+        paint = stops[0][1];
+      } else {
+        const g = sctx.createLinearGradient(0, 0, w, 0);
+        stops.forEach(([pos, col]) => g.addColorStop(pos, col));
+        paint = g;
+      }
+    }
+    sctx.fillStyle = paint;
+    const round = hasRoundRect && viz.barShape !== "sharp";
+    const showTop = viz.barPosition !== "bottom";
+    const showBottom = viz.barPosition !== "top";
+    for (let b = 0; b < bars; b++) {
+      const t = b / (bars - 1);
+      const foldT = viz.barMirrorFold ? t < 0.5 ? t * 2 : (1 - t) * 2 : t;
+      const v = Math.pow(bandLerp(foldT), 1.1);
+      const bh = Math.max(2, v * maxH * (0.25 + S.energy * 0.95) * viz.barSensitivity);
+      const x = b * (w / bars) + BAR_GAP / 2;
+      sctx.globalAlpha = viz.colorOpacity;
+      if (round) {
+        if (showTop) {
+          sctx.beginPath();
+          sctx.roundRect(x, 0, barW, bh, [0, 0, 2, 2]);
+          sctx.fill();
+        }
+        if (showBottom) {
+          sctx.beginPath();
+          sctx.roundRect(x, h - bh, barW, bh, [2, 2, 0, 0]);
+          sctx.fill();
+        }
+      } else {
+        if (showTop) sctx.fillRect(x, 0, barW, bh);
+        if (showBottom) sctx.fillRect(x, h - bh, barW, bh);
+      }
+    }
+    sctx.globalAlpha = 1;
+  }
+  function draw() {
+    const viz = getVizSettings();
+    const w = el.canvas.width / (window.devicePixelRatio || 1);
+    const c = w / 2;
+    ctx.clearRect(0, 0, w, w);
+    const artR = S.artSize / 2;
+    const beat = 1 + S.pulse * 0.13 * viz.pulseStrength;
+    const STEPS = 220;
+    const stops = gradientStops(viz);
+    for (const ring of RINGS) {
+      if (viz.ringsOn[RINGS.indexOf(ring)] === false) continue;
+      const width = ring.width * viz.ringThickness;
+      const maxR = w / 2 - width - 2;
+      const avail = Math.max(1, maxR - artR);
+      const drive = Math.min(1, S.energy);
+      const base = artR * beat + avail * (ring.gap + drive * 0.05 * ring.lobes);
+      const amp = avail * ring.amp * (0.15 + 0.85 * drive) * viz.ringReactivity;
+      const speed = viz.lockRotationDirection ? Math.abs(ring.speed) : ring.speed;
+      ctx.beginPath();
+      for (let s = 0; s <= STEPS; s++) {
+        const a = s / STEPS * Math.PI * 2;
+        const mod = bandAt((a * ring.lobes + S.rotation * speed) % (Math.PI * 2));
+        const r = clamp(base + amp * mod, artR * 0.6, maxR);
+        const x = c + Math.cos(a - Math.PI / 2) * r;
+        const y = c + Math.sin(a - Math.PI / 2) * r;
+        s === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle = ringPaint(ctx, c, base + amp, ring);
+      ctx.globalAlpha = ring.alpha * viz.colorOpacity;
+      ctx.lineWidth = width;
+      ctx.lineJoin = "round";
+      ctx.shadowBlur = 20 * S.energy * viz.glowIntensity;
+      ctx.shadowColor = stops ? stops[Math.min(stops.length - 1, RINGS.indexOf(ring))][1] : paintColor(S.accent, viz);
+      ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    ctx.shadowBlur = 0;
+    el.art.style.transform = `scale(${1 + S.pulse * 0.012 * viz.pulseStrength})`;
+  }
+
   // src/settings.js
   var KEY = "fsp:vizSettings";
   var DEFAULTS = {
@@ -1858,6 +2126,7 @@
     inputs.contextVisibility.addEventListener("change", () => {
       settings.contextVisibility = inputs.contextVisibility.value;
       save();
+      resize();
     });
     inputs.nextVisibility.addEventListener("change", () => {
       settings.nextVisibility = inputs.nextVisibility.value;
@@ -2316,30 +2585,37 @@
       album_name: album,
       duration: String(dur)
     });
+    let plain = null;
     try {
-      let r = await fetch(`${PROXY}/lyrics/lrclib?${q}`);
-      if (!r.ok) {
-        const s = await fetch(
-          `${PROXY}/lyrics/lrclib-search?${new URLSearchParams({ track_name: title, artist_name: artist })}`
-        );
-        if (!s.ok) return null;
+      const r = await fetch(`${PROXY}/lyrics/lrclib?${q}`);
+      if (r.ok) {
+        const d = await r.json();
+        if (d.syncedLyrics) return { lines: parseLRC(d.syncedLyrics), synced: true, via: "LRCLIB" };
+        if (d.plainLyrics) {
+          plain = {
+            lines: d.plainLyrics.split(/\r?\n/).map((t) => ({ time: 0, text: t })),
+            synced: false,
+            via: "LRCLIB (unsynced)"
+          };
+        }
+      }
+    } catch {
+      return null;
+    }
+    try {
+      const s = await fetch(
+        `${PROXY}/lyrics/lrclib-search?${new URLSearchParams({ track_name: title, artist_name: artist })}`
+      );
+      if (s.ok) {
         const list = await s.json();
         const best = list.filter((x) => x.syncedLyrics).sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))[0];
-        if (!best || Math.abs((best.duration || 0) - dur) > 12) return null;
-        return { lines: parseLRC(best.syncedLyrics), synced: true, via: "LRCLIB search" };
-      }
-      const d = await r.json();
-      if (d.syncedLyrics) return { lines: parseLRC(d.syncedLyrics), synced: true, via: "LRCLIB" };
-      if (d.plainLyrics) {
-        return {
-          lines: d.plainLyrics.split(/\r?\n/).map((t) => ({ time: 0, text: t })),
-          synced: false,
-          via: "LRCLIB (unsynced)"
-        };
+        if (best && Math.abs((best.duration || 0) - dur) <= 12) {
+          return { lines: parseLRC(best.syncedLyrics), synced: true, via: "LRCLIB search" };
+        }
       }
     } catch {
     }
-    return null;
+    return plain;
   }
   function plausible(lines) {
     if (!lines?.length) return false;
@@ -2351,7 +2627,42 @@
     if (firstTime > dur * 0.5 && lines.length > 4) return false;
     return true;
   }
-  var PROVIDERS = ["auto", "lrclib", "betterlyrics"];
+  async function fromNetease(item) {
+    const title = titleOf(item);
+    const artist = (artistOf(item).split(",")[0] || "").trim();
+    const dur = Math.round((Spicetify.Player.getDuration() || 0) / 1e3);
+    if (!title || !artist) return null;
+    for (const variant of titleVariants(title)) {
+      try {
+        const sq = new URLSearchParams({ q: `${variant} ${artist}` });
+        const sr = await fetch(`${PROXY}/lyrics/netease-search?${sq}`);
+        if (!sr.ok) continue;
+        const sd = await sr.json();
+        const songs = sd?.result?.songs || [];
+        if (!songs.length) continue;
+        const artistLower = artist.toLowerCase();
+        const matchingArtist = (s) => (s.artists || []).some(
+          (a) => (a.name || "").toLowerCase().includes(artistLower) || artistLower.includes((a.name || "").toLowerCase())
+        );
+        const pool = songs.filter(matchingArtist);
+        const candidates = pool.length ? pool : songs;
+        const best = candidates.map((s) => ({ s, diff: Math.abs((s.duration || 0) / 1e3 - dur) })).sort((a, b) => a.diff - b.diff)[0];
+        if (!best || best.diff > 12) continue;
+        const lq = new URLSearchParams({ id: String(best.s.id) });
+        const lr = await fetch(`${PROXY}/lyrics/netease-lyric?${lq}`);
+        if (!lr.ok) continue;
+        const ld = await lr.json();
+        const lrc = ld?.lrc?.lyric;
+        if (!lrc) continue;
+        const lines = parseLRC(lrc);
+        if (lines?.length) return { lines, synced: true, via: "NetEase" };
+      } catch {
+        return null;
+      }
+    }
+    return null;
+  }
+  var PROVIDERS = ["auto", "lrclib", "betterlyrics", "netease"];
 
   // src/lyrics/view.js
   var lyrics = [];
@@ -2455,18 +2766,22 @@
       result = await fromLrclib(item);
     } else if (mode === "betterlyrics") {
       result = await fromBetterLyrics(item);
+    } else if (mode === "netease") {
+      result = await fromNetease(item);
     } else {
-      let lineLevel = null;
-      for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib]) {
+      let bestSynced = null;
+      let bestUnsynced = null;
+      for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, fromNetease]) {
         const r = await fn(item);
         if (!r?.lines?.length) continue;
         if (r.words) {
           result = r;
           break;
         }
-        lineLevel = lineLevel || r;
+        if (r.synced) bestSynced = bestSynced || r;
+        else bestUnsynced = bestUnsynced || r;
       }
-      result = result || lineLevel;
+      result = result || bestSynced || bestUnsynced;
     }
     if (Spicetify.Player.data?.item?.uri !== uri) return;
     if (result?.lines?.length && !plausible(result.lines)) {
@@ -2474,11 +2789,12 @@
       lyricsSource = `rejected (${result.via})`;
       return;
     }
-    if (result?.lines?.length) {
-      lyrics = result.lines.filter((l) => l.text || result.synced);
-      if (result.synced) lyrics = withGapMarkers(lyrics);
-      lyricsSource = `${result.via}${result.words ? " \xB7 per-word" : ""}${result.synced ? "" : " \xB7 not synced"}`;
-      renderLyrics(result.synced);
+    if (result?.lines?.length && result.synced) {
+      lyrics = withGapMarkers(result.lines.filter((l) => l.text));
+      lyricsSource = `${result.via}${result.words ? " \xB7 per-word" : ""}`;
+      renderLyrics(true);
+    } else if (result?.lines?.length) {
+      lyricsSource = `${result.via} (unsynced, hidden)`;
     }
   }
   function withGapMarkers(lines) {
@@ -2866,258 +3182,6 @@
     } catch {
       S.accent = "#ffffff";
     }
-  }
-
-  // src/render.js
-  var CANVAS_RATIO = 1.62;
-  var shadeCtx = document.createElement("canvas").getContext("2d");
-  function tint(css, factor) {
-    if (!css || factor === 1) return css;
-    shadeCtx.fillStyle = css;
-    const norm = shadeCtx.fillStyle;
-    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(norm);
-    if (!m) return css;
-    const [r, g, b] = [1, 2, 3].map((i) => clamp(Math.round(parseInt(m[i], 16) * factor), 0, 255));
-    return `rgb(${r},${g},${b})`;
-  }
-  function rgbToHsv(r, g, b) {
-    r /= 255;
-    g /= 255;
-    b /= 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b), d = max - min;
-    let h = 0;
-    if (d !== 0) {
-      if (max === r) h = (g - b) / d % 6;
-      else if (max === g) h = (b - r) / d + 2;
-      else h = (r - g) / d + 4;
-      h *= 60;
-      if (h < 0) h += 360;
-    }
-    return [h, max === 0 ? 0 : d / max, max];
-  }
-  function hsvToRgb(h, s, v) {
-    const c = v * s, x = c * (1 - Math.abs(h / 60 % 2 - 1)), m = v - c;
-    let r = 0, g = 0, b = 0;
-    if (h < 60) [r, g, b] = [c, x, 0];
-    else if (h < 120) [r, g, b] = [x, c, 0];
-    else if (h < 180) [r, g, b] = [0, c, x];
-    else if (h < 240) [r, g, b] = [0, x, c];
-    else if (h < 300) [r, g, b] = [x, 0, c];
-    else [r, g, b] = [c, 0, x];
-    return [Math.round((r + m) * 255), Math.round((g + m) * 255), Math.round((b + m) * 255)];
-  }
-  function brighten(css, factor) {
-    if (!css || factor === 1) return css;
-    shadeCtx.fillStyle = css;
-    const norm = shadeCtx.fillStyle;
-    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})/i.exec(norm);
-    if (!m) return css;
-    const [h, s, v] = rgbToHsv(parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16));
-    const [r, g, b] = hsvToRgb(h, s, clamp(v * factor, 0, 1));
-    return `rgb(${r},${g},${b})`;
-  }
-  function paintColor(css, viz) {
-    return tint(brighten(css, viz.artValueBrightness), viz.artTint);
-  }
-  function warp(t, spread) {
-    return clamp(0.5 + (t - 0.5) * spread, 0, 1);
-  }
-  function gradientStops(viz) {
-    if (viz.colorMode === "custom") {
-      const colors = customColors();
-      return colors.map((c, i) => [colors.length > 1 ? i / (colors.length - 1) : 0, c]);
-    }
-    if (!S.palette || S.palette.length < 2) return null;
-    return S.palette.map((c, i) => [
-      warp(i / (S.palette.length - 1), viz.paletteSpread),
-      paintColor(c, viz)
-    ]);
-  }
-  function resize() {
-    root.classList.toggle("fsp-fs", !!document.fullscreenElement);
-    resizeSpectrum();
-    const vw = window.innerWidth, vh = window.innerHeight;
-    const cardH = (el.meta?.offsetHeight || 110) + 22;
-    const below = 18;
-    const region = Math.max(200, vh - cardH);
-    root.style.setProperty("--fsp-stage-top", `${Math.round(region / 2)}px`);
-    let side = Math.min(vw * 0.48, region - below);
-    side = clamp(side, 150, 980);
-    S.artSize = Math.floor(clamp(side / CANVAS_RATIO, 90, 560));
-    root.style.setProperty("--fsp-art", `${S.artSize}px`);
-    side = Math.floor(S.artSize * CANVAS_RATIO);
-    root.style.setProperty("--fsp-band", `${Math.round((side - S.artSize) / 2)}px`);
-    const dpr = window.devicePixelRatio || 1;
-    el.wrap.style.width = el.wrap.style.height = `${side}px`;
-    el.canvas.width = side * dpr;
-    el.canvas.height = side * dpr;
-    el.canvas.style.width = el.canvas.style.height = `${side}px`;
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    requestAnimationFrame(() => {
-      const art = el.art?.getBoundingClientRect();
-      if (!art?.width) return;
-      root.style.setProperty("--fsp-lsz-left", `${Math.round(art.right + 30)}px`);
-      const volW = el.volWrap?.getBoundingClientRect().width || 0;
-      root.style.setProperty("--fsp-vol-left", `${Math.round(art.left - 30 - volW)}px`);
-      root.style.setProperty("--fsp-gear-top", `${Math.round(art.top - 48)}px`);
-    });
-  }
-  function focusedIndexRanges() {
-    return freqRanges().map(([lo, hi]) => {
-      const iLo = Math.floor(lo * (S.N - 1));
-      const iHi = Math.max(iLo + 1, Math.min(S.N - 1, Math.ceil(hi * (S.N - 1))));
-      return [iLo, iHi];
-    });
-  }
-  function sampleBand(t) {
-    const ranges = focusedIndexRanges();
-    const lens = ranges.map(([iLo, iHi]) => iHi - iLo);
-    const total = lens.reduce((a, b) => a + b, 0) || 1;
-    let pos = clamp(t, 0, 1) * total;
-    for (let r = 0; r < ranges.length; r++) {
-      const [iLo, iHi] = ranges[r];
-      const len = lens[r];
-      if (pos <= len || r === ranges.length - 1) {
-        const local = iLo + clamp(pos, 0, len);
-        const i = Math.floor(local), j = Math.min(iHi, i + 1);
-        return lerp(S.bands[i] ?? 0, S.bands[j] ?? 0, local - i);
-      }
-      pos -= len;
-    }
-    return 0;
-  }
-  function bandAt(angle) {
-    let a = angle % (Math.PI * 2);
-    if (a > Math.PI) a = Math.PI * 2 - a;
-    const v = sampleBand(a / Math.PI);
-    const indices = /* @__PURE__ */ new Set();
-    for (const [iLo, iHi] of focusedIndexRanges()) {
-      for (let k = iLo; k <= iHi; k++) indices.add(k);
-    }
-    let mean = 0;
-    for (const k of indices) mean += S.bands[k];
-    return v - mean / (indices.size || 1);
-  }
-  var RINGS = [
-    { gap: 0.08, amp: 0.3, width: 2.2, alpha: 0.9, speed: 0.22, lobes: 1 },
-    { gap: 0.28, amp: 0.36, width: 1.5, alpha: 0.5, speed: -0.14, lobes: 2 },
-    { gap: 0.46, amp: 0.32, width: 1.1, alpha: 0.26, speed: 0.08, lobes: 3 }
-  ];
-  function ringPaint(ctx2, c, radius, ring) {
-    const viz = getVizSettings();
-    const stops = gradientStops(viz);
-    if (!stops) return paintColor(S.accent, viz);
-    if (stops.length === 1) return stops[0][1];
-    const dir = viz.lockRotationDirection ? 1 : ring.speed > 0 ? 1 : -1;
-    const a = S.rotation * 0.25 * dir;
-    const g = ctx2.createLinearGradient(
-      c + Math.cos(a) * radius,
-      c + Math.sin(a) * radius,
-      c - Math.cos(a) * radius,
-      c - Math.sin(a) * radius
-    );
-    stops.forEach(([pos, col]) => g.addColorStop(pos, col));
-    return g;
-  }
-  var specCanvas = root.querySelector(".fsp-spectrum");
-  var sctx = specCanvas.getContext("2d");
-  var BAR_GAP = 3;
-  var hasRoundRect = typeof sctx.roundRect === "function";
-  function resizeSpectrum() {
-    const dpr = window.devicePixelRatio || 1;
-    specCanvas.width = window.innerWidth * dpr;
-    specCanvas.height = window.innerHeight * dpr;
-    sctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  }
-  function bandLerp(t) {
-    return sampleBand(t);
-  }
-  function drawSpectrum() {
-    const viz = getVizSettings();
-    const w = window.innerWidth, h = window.innerHeight;
-    sctx.clearRect(0, 0, w, h);
-    const bars = Math.max(24, Math.min(160, Math.floor(w / 16 * viz.barDensity)));
-    const barW = w / bars - BAR_GAP;
-    const maxH = Math.min(h * 0.22, 230) * viz.barHeight;
-    const stops = gradientStops(viz);
-    let paint = paintColor(S.accent, viz);
-    if (stops) {
-      if (stops.length === 1) {
-        paint = stops[0][1];
-      } else {
-        const g = sctx.createLinearGradient(0, 0, w, 0);
-        stops.forEach(([pos, col]) => g.addColorStop(pos, col));
-        paint = g;
-      }
-    }
-    sctx.fillStyle = paint;
-    const round = hasRoundRect && viz.barShape !== "sharp";
-    const showTop = viz.barPosition !== "bottom";
-    const showBottom = viz.barPosition !== "top";
-    for (let b = 0; b < bars; b++) {
-      const t = b / (bars - 1);
-      const foldT = viz.barMirrorFold ? t < 0.5 ? t * 2 : (1 - t) * 2 : t;
-      const v = Math.pow(bandLerp(foldT), 1.1);
-      const bh = Math.max(2, v * maxH * (0.25 + S.energy * 0.95) * viz.barSensitivity);
-      const x = b * (w / bars) + BAR_GAP / 2;
-      sctx.globalAlpha = viz.colorOpacity;
-      if (round) {
-        if (showTop) {
-          sctx.beginPath();
-          sctx.roundRect(x, 0, barW, bh, [0, 0, 2, 2]);
-          sctx.fill();
-        }
-        if (showBottom) {
-          sctx.beginPath();
-          sctx.roundRect(x, h - bh, barW, bh, [2, 2, 0, 0]);
-          sctx.fill();
-        }
-      } else {
-        if (showTop) sctx.fillRect(x, 0, barW, bh);
-        if (showBottom) sctx.fillRect(x, h - bh, barW, bh);
-      }
-    }
-    sctx.globalAlpha = 1;
-  }
-  function draw() {
-    const viz = getVizSettings();
-    const w = el.canvas.width / (window.devicePixelRatio || 1);
-    const c = w / 2;
-    ctx.clearRect(0, 0, w, w);
-    const artR = S.artSize / 2;
-    const beat = 1 + S.pulse * 0.13 * viz.pulseStrength;
-    const STEPS = 220;
-    const stops = gradientStops(viz);
-    for (const ring of RINGS) {
-      if (viz.ringsOn[RINGS.indexOf(ring)] === false) continue;
-      const width = ring.width * viz.ringThickness;
-      const maxR = w / 2 - width - 2;
-      const avail = Math.max(1, maxR - artR);
-      const drive = Math.min(1, S.energy);
-      const base = artR * beat + avail * (ring.gap + drive * 0.05 * ring.lobes);
-      const amp = avail * ring.amp * (0.15 + 0.85 * drive) * viz.ringReactivity;
-      const speed = viz.lockRotationDirection ? Math.abs(ring.speed) : ring.speed;
-      ctx.beginPath();
-      for (let s = 0; s <= STEPS; s++) {
-        const a = s / STEPS * Math.PI * 2;
-        const mod = bandAt((a * ring.lobes + S.rotation * speed) % (Math.PI * 2));
-        const r = clamp(base + amp * mod, artR * 0.6, maxR);
-        const x = c + Math.cos(a - Math.PI / 2) * r;
-        const y = c + Math.sin(a - Math.PI / 2) * r;
-        s === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
-      ctx.closePath();
-      ctx.strokeStyle = ringPaint(ctx, c, base + amp, ring);
-      ctx.globalAlpha = ring.alpha * viz.colorOpacity;
-      ctx.lineWidth = width;
-      ctx.lineJoin = "round";
-      ctx.shadowBlur = 20 * S.energy * viz.glowIntensity;
-      ctx.shadowColor = stops ? stops[Math.min(stops.length - 1, RINGS.indexOf(ring))][1] : paintColor(S.accent, viz);
-      ctx.stroke();
-    }
-    ctx.globalAlpha = 1;
-    ctx.shadowBlur = 0;
-    el.art.style.transform = `scale(${1 + S.pulse * 0.012 * viz.pulseStrength})`;
   }
 
   // src/controls.js
