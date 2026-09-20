@@ -4,6 +4,50 @@ All notable changes to this project are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/), and
 this project uses [Semantic Versioning](https://semver.org/).
 
+## [1.2.0] - 2026-09-20
+
+### Added
+- **NetEase Cloud Music as a third lyrics source** (requires the updated
+  `bridge.js` — see the audio-bridge folder's own changelog note). A free,
+  no-login API that licenses a large amount of Western catalog alongside
+  its Chinese one, so it can turn up synced lyrics that LRCLIB and
+  BetterLyrics don't have for a given track.
+- Gear icon now stays clear of the "Playing from" card on short/small
+  windows — it used to sit a fixed distance above the artwork regardless
+  of available space, which could push it under the card on a small
+  monitor. It now measures the card's actual position and never renders
+  above it.
+
+### Fixed
+- The auto (multi-provider) lyrics lookup didn't actually guarantee "only
+  settle for worse lyrics if nothing better exists." It locked in the
+  *first* provider to return any lines at all — so an early plain/unsynced
+  hit (say, from LRCLIB) could win outright, even when a later provider
+  (say, the new NetEase source) went on to fetch real synced lyrics for the
+  same track, which were then silently thrown away. Now tracks the best
+  synced result and the best unsynced result separately, so any synced
+  result — from any provider, in priority order — always wins over an
+  unsynced one, and unsynced text is only used when nothing synced turned
+  up anywhere in the chain.
+
+### Changed
+- LRCLIB lookups no longer stop at an exact match that only has plain
+  (unsynced) text — they now also check LRCLIB's search index for a
+  different catalog entry (a different release/remaster) that might have
+  real timings, the same fallback previously only used when the exact
+  match failed outright.
+- **Lyrics with no timings are no longer shown at all.** Static, unsynced
+  text that never highlights along with playback read as broken rather
+  than as "lyrics, just plain" — this is now treated the same as not
+  finding lyrics for the track.
+- The idle cursor-hiding behavior (meant for real OS fullscreen, where
+  there's nothing left to click) was also quietly applying in windowed
+  mode, making the window hard to drag: after a couple of idle seconds the
+  cursor vanished, so the first grab attempt was aimed blind. Now scoped
+  to real fullscreen only.
+- Window-drag strip enlarged from 52px to 90px tall, for more margin of
+  error when grabbing the window in windowed mode.
+
 ## [1.1.0] - 2026-09-19
 
 ### Added
