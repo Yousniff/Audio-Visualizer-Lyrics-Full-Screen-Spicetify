@@ -10,8 +10,10 @@ is a quick reference for people already in this folder.
   loopback) — nothing else on your system is heard.
 - Runs an FFT and streams spectrum data to the extension over
   `ws://127.0.0.1:8787`.
-- Proxies two lyrics APIs on the same port so the extension can reach them
-  without hitting CORS.
+- Proxies three lyrics APIs on the same port so the extension can reach them
+  without hitting CORS: LRCLIB, a BetterLyrics/TTML wrapper, and NetEase
+  Cloud Music's own search+lyric API (a free, no-login third source that
+  often has synced lyrics the other two don't, even for Western tracks).
 - Only exists while Spotify is open (see the two launch options below).
 
 ## Setup
