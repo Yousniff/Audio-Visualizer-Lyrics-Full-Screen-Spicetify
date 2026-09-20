@@ -13,7 +13,7 @@ import { clamp } from "../utils.js";
 import { spring } from "../motion.js";
 import { icons } from "../icons.js";
 import {
-  PROVIDERS, fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, plausible,
+  PROVIDERS, fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, fromNetease, plausible,
 } from "./sources.js";
 
 let lyrics = [];            // [{ time: seconds, text }]
@@ -146,17 +146,28 @@ export async function loadLyrics(item) {
     result = await fromLrclib(item);
   } else if (mode === "betterlyrics") {
     result = await fromBetterLyrics(item);
+  } else if (mode === "netease") {
+    result = await fromNetease(item);
   } else {
-    // Prefer a source that has real syllable timing. Only settle for a
-    // line-level answer once nothing better has turned up.
-    let lineLevel = null;
-    for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib]) {
+    // Priority order: real per-word timing beats any line-level result,
+    // and — since unsynced results are hidden outright (see below) —  any
+    // *synced* line-level result has to beat an unsynced one too, from
+    // whichever provider it came from. Without that second distinction, an
+    // early unsynced hit (say, LRCLIB's plain text) would lock in as
+    // "found something" and a later provider's synced result (NetEase,
+    // say) would be fetched and then thrown away for no reason. Only
+    // settles for unsynced text if literally nothing synced turned up
+    // anywhere in the chain.
+    let bestSynced = null;
+    let bestUnsynced = null;
+    for (const fn of [fromOtherExtension, fromBetterLyrics, fromClient, fromLrclib, fromNetease]) {
       const r = await fn(item);
       if (!r?.lines?.length) continue;
       if (r.words) { result = r; break; }
-      lineLevel = lineLevel || r;
+      if (r.synced) bestSynced = bestSynced || r;
+      else bestUnsynced = bestUnsynced || r;
     }
-    result = result || lineLevel;
+    result = result || bestSynced || bestUnsynced;
   }
   if (Spicetify.Player.data?.item?.uri !== uri) return;      // track changed meanwhile
 
@@ -166,11 +177,18 @@ export async function loadLyrics(item) {
     return;
   }
 
-  if (result?.lines?.length) {
-    lyrics = result.lines.filter((l) => l.text || result.synced);
-    if (result.synced) lyrics = withGapMarkers(lyrics);
-    lyricsSource = `${result.via}${result.words ? " · per-word" : ""}${result.synced ? "" : " · not synced"}`;
-    renderLyrics(result.synced);
+  if (result?.lines?.length && result.synced) {
+    lyrics = withGapMarkers(result.lines.filter((l) => l.text));
+    lyricsSource = `${result.via}${result.words ? " · per-word" : ""}`;
+    renderLyrics(true);
+  } else if (result?.lines?.length) {
+    // Found lyrics, but with no timings to line up against playback —
+    // static text with nothing ever highlighting reads as broken, not as
+    // "lyrics, just plain," so this is treated the same as not finding
+    // any: stays hidden (renderLyrics(null) above already did that; lyrics
+    // stays empty). Left in lyricsSource so the debug overlay still shows
+    // that something was actually found, just suppressed.
+    lyricsSource = `${result.via} (unsynced, hidden)`;
   }
 }
 

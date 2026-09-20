@@ -185,34 +185,54 @@ async function lrclibTry(title, artist, album, dur) {
     track_name: title, artist_name: artist, album_name: album, duration: String(dur),
   });
 
+  // Kept as a last resort: if nothing synced turns up anywhere below, this
+  // is still better than returning nothing (the caller drops it entirely
+  // if there's no timing to line up with playback, per settings.js/view.js
+  // — but a provider that can be forced directly, via the debug cycle,
+  // should still get whatever LRCLIB actually has).
+  let plain = null;
+
   try {
-    let r = await fetch(`${PROXY}/lyrics/lrclib?${q}`);
-    if (!r.ok) {
-      // Exact match failed — fall back to a search and take the closest duration.
-      const s = await fetch(
-        `${PROXY}/lyrics/lrclib-search?${new URLSearchParams({ track_name: title, artist_name: artist })}`
-      );
-      if (!s.ok) return null;
+    const r = await fetch(`${PROXY}/lyrics/lrclib?${q}`);
+    if (r.ok) {
+      const d = await r.json();
+      if (d.syncedLyrics) return { lines: parseLRC(d.syncedLyrics), synced: true, via: "LRCLIB" };
+      if (d.plainLyrics) {
+        plain = {
+          lines: d.plainLyrics.split(/\r?\n/).map((t) => ({ time: 0, text: t })),
+          synced: false,
+          via: "LRCLIB (unsynced)",
+        };
+      }
+    }
+  } catch {
+    return null;   // bridge/network problem — the search endpoint won't fare better
+  }
+
+  // The exact match either missed entirely or only had plain text — LRCLIB
+  // often carries more than one catalog entry for the same recording (a
+  // different release, region, or remaster), and one of those can have
+  // synced timings even when the exact (title, artist, album, duration)
+  // combination above didn't. Worth a search before settling for plain
+  // text (or nothing).
+  try {
+    const s = await fetch(
+      `${PROXY}/lyrics/lrclib-search?${new URLSearchParams({ track_name: title, artist_name: artist })}`
+    );
+    if (s.ok) {
       const list = await s.json();
       const best = list
         .filter((x) => x.syncedLyrics)
         .sort((a, b) => Math.abs((a.duration || 0) - dur) - Math.abs((b.duration || 0) - dur))[0];
       // Allow a wider duration window than the exact lookup, but not so wide
       // that a different edit gets synced against this one.
-      if (!best || Math.abs((best.duration || 0) - dur) > 12) return null;
-      return { lines: parseLRC(best.syncedLyrics), synced: true, via: "LRCLIB search" };
-    }
-    const d = await r.json();
-    if (d.syncedLyrics) return { lines: parseLRC(d.syncedLyrics), synced: true, via: "LRCLIB" };
-    if (d.plainLyrics) {
-      return {
-        lines: d.plainLyrics.split(/\r?\n/).map((t) => ({ time: 0, text: t })),
-        synced: false,
-        via: "LRCLIB (unsynced)",
-      };
+      if (best && Math.abs((best.duration || 0) - dur) <= 12) {
+        return { lines: parseLRC(best.syncedLyrics), synced: true, via: "LRCLIB search" };
+      }
     }
   } catch {}
-  return null;
+
+  return plain;
 }
 
 // A match against a different edit produces timings that don't fit this
@@ -230,6 +250,64 @@ export function plausible(lines) {
   return true;
 }
 
+// NetEase Cloud Music's own web API, reached through the bridge the same
+// way LRCLIB/BetterLyrics are — no key, no login, and (despite being a
+// Chinese service) it licenses a huge amount of Western catalog too, so it
+// turns up synced lyrics some tracks simply don't have on LRCLIB or
+// BetterLyrics. Two calls: search by title+artist to find NetEase's own
+// song id, then fetch that id's lyric, which comes back as plain LRC text
+// — same format parseLRC() already handles for LRCLIB.
+export async function fromNetease(item) {
+  const title = titleOf(item);
+  const artist = (artistOf(item).split(",")[0] || "").trim();
+  const dur = Math.round((Spicetify.Player.getDuration() || 0) / 1000);
+  if (!title || !artist) return null;
+
+  for (const variant of titleVariants(title)) {
+    try {
+      const sq = new URLSearchParams({ q: `${variant} ${artist}` });
+      const sr = await fetch(`${PROXY}/lyrics/netease-search?${sq}`);
+      if (!sr.ok) continue;
+      const sd = await sr.json();
+      const songs = sd?.result?.songs || [];
+      if (!songs.length) continue;
+
+      // NetEase's search is fuzzy and can surface an unrelated track with a
+      // similar title — prefer results whose artist actually matches
+      // before falling back to whatever came back.
+      const artistLower = artist.toLowerCase();
+      const matchingArtist = (s) =>
+        (s.artists || []).some(
+          (a) =>
+            (a.name || "").toLowerCase().includes(artistLower) ||
+            artistLower.includes((a.name || "").toLowerCase())
+        );
+      const pool = songs.filter(matchingArtist);
+      const candidates = pool.length ? pool : songs;
+
+      const best = candidates
+        .map((s) => ({ s, diff: Math.abs((s.duration || 0) / 1000 - dur) }))
+        .sort((a, b) => a.diff - b.diff)[0];
+      // Same reasoning as LRCLIB's search fallback: a close duration match
+      // is the best signal available that this is actually the same
+      // recording rather than a cover, remix, or unrelated song.
+      if (!best || best.diff > 12) continue;
+
+      const lq = new URLSearchParams({ id: String(best.s.id) });
+      const lr = await fetch(`${PROXY}/lyrics/netease-lyric?${lq}`);
+      if (!lr.ok) continue;
+      const ld = await lr.json();
+      const lrc = ld?.lrc?.lyric;
+      if (!lrc) continue;
+      const lines = parseLRC(lrc);
+      if (lines?.length) return { lines, synced: true, via: "NetEase" };
+    } catch {
+      return null;   // bridge/network problem — no point trying other variants
+    }
+  }
+  return null;
+}
+
 // Which provider to use. "auto" walks the chain; the others force one, so a
 // bad match on one source can be skipped without touching the others.
-export const PROVIDERS = ["auto", "lrclib", "betterlyrics"];
+export const PROVIDERS = ["auto", "lrclib", "betterlyrics", "netease"];

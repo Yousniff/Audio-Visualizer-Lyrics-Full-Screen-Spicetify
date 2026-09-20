@@ -25,13 +25,26 @@ const CSS = `
   }
   .fsp-root.fsp-open  { display: block; }
   .fsp-root.fsp-shown { opacity: 1; }
-  .fsp-root.fsp-idle  { cursor: none; }
+  /* Idle hides the cursor entirely — meant for real OS fullscreen, where
+     there's nothing left to click anyway. In windowed mode it was doing
+     the same thing and quietly working against dragging the window: with
+     no visible cursor, the first grab attempt after being idle for a
+     couple seconds is aimed blind, and if it lands a few pixels off the
+     drag strip it just silently fails with no feedback — which reads as
+     "sometimes it lets me grab it, sometimes it doesn't" even though
+     nothing is actually random about it. Scoped to real fullscreen only. */
+  .fsp-root.fsp-fs.fsp-idle { cursor: none; }
   .fsp-root.fsp-idle .fsp-chrome { opacity: 0; }
 
   /* Window dragging: the overlay covers Spotify's drag region, so put it back.
      Spotify's own minimise/maximise/close draw above the page in the top-right,
-     so that corner is kept clear. */
-  .fsp-drag { position: absolute; top: 0; left: 0; right: 180px; height: 52px; -webkit-app-region: drag; }
+     so that corner is kept clear. Taller than the "Playing from" card alone
+     (which was the whole visible target before) so there's real margin for
+     error above/around it — anything actually clickable in this band (the
+     gear button, once the panel's open) stays reachable regardless, since
+     a no-drag element always wins over a draggable ancestor region behind
+     it for its own bounds. */
+  .fsp-drag { position: absolute; top: 0; left: 0; right: 180px; height: 90px; -webkit-app-region: drag; }
   .fsp-root button, .fsp-root .fsp-hit { -webkit-app-region: no-drag; }
   /* The "Playing from" label sits on top of .fsp-drag (same top-left
      corner) but, being a plain div with no app-region of its own, it

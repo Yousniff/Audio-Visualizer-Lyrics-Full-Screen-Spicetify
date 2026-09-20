@@ -10,10 +10,11 @@
 import { root, el } from "./dom.js";
 import { clamp } from "./utils.js";
 // Only referenced inside callbacks below (never at module top level), so
-// this is safe despite track.js importing getVizSettings from this same
-// file — by the time either side actually calls into the other, both
-// modules have finished evaluating.
+// this is safe despite track.js/render.js importing from this same file —
+// by the time either side actually calls into the other, both modules
+// have finished evaluating.
 import { setupMarquee, applyMarqueeSpeed } from "./track.js";
+import { resize } from "./render.js";
 
 const KEY = "fsp:vizSettings";
 
@@ -638,6 +639,11 @@ if (inputs) {
   inputs.contextVisibility.addEventListener("change", () => {
     settings.contextVisibility = inputs.contextVisibility.value;
     save(); // applyGeneral() (called from save()) does the actual show/hide
+    // The gear's own vertical position leaves just enough clearance below
+    // this card (see render.js's resize()) — recompute it now rather than
+    // waiting for the next window resize, so hiding/showing the card is
+    // reflected immediately.
+    resize();
   });
   inputs.nextVisibility.addEventListener("change", () => {
     settings.nextVisibility = inputs.nextVisibility.value;

@@ -138,10 +138,22 @@ export function resize() {
     root.style.setProperty("--fsp-lsz-left", `${Math.round(art.right + 30)}px`);
     const volW = el.volWrap?.getBoundingClientRect().width || 0;
     root.style.setProperty("--fsp-vol-left", `${Math.round(art.left - 30 - volW)}px`);
-    // The gear sits directly above the volume slider (same left offset),
-    // clear of the artwork's top edge — offset grown along with the
-    // icon's own size so the gap above the artwork stays consistent.
-    root.style.setProperty("--fsp-gear-top", `${Math.round(art.top - 48)}px`);
+    // The gear sits directly above the volume slider (same left offset).
+    // 48px clear of the artwork's top edge is the normal gap — plenty of
+    // room on most screens, since the "Playing from" card sits well above
+    // that on its own fixed 14px offset. But on a short window/monitor,
+    // the artwork (and everything centered on it) sits much closer to the
+    // top, and that same fixed 48px gap can push the gear up underneath —
+    // or past — the card instead of just getting a little cozier with the
+    // volume slider like it should. Clamp it to never go above the card's
+    // actual bottom edge (plus a small margin), whatever that card's
+    // height happens to be; short of that floor, the gear naturally slides
+    // down toward the volume slider's top as the window shrinks, exactly
+    // as it should.
+    const contextBottom = el.context?.getBoundingClientRect().bottom || 0;
+    const minGearTop = contextBottom + 10;
+    const idealGearTop = art.top - 48;
+    root.style.setProperty("--fsp-gear-top", `${Math.round(Math.max(idealGearTop, minGearTop))}px`);
   });
 }
 
