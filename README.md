@@ -2,6 +2,11 @@
 
 See [CHANGELOG.md](CHANGELOG.md) for recent updates.
 
+IF BUTTON TO LAUNCH FULL SCREEN PLAYER DISAPPEARED THIS IS DUE TO SPOTIFY UI CHANGE TESTING 
+USE CTRL + SHIFT + F 
+TO LAUNCH FULL SCREEN PLAYER FOR NOW UNTIL UI CHANGES ARE OUT OF A/B TESTING
+
+
 A fullscreen now-playing view: album art with a live, audio-reactive ring
 visualizer and full-width spectrum bars, synced (word-level, where available)
 lyrics, blurred artist-image backdrops, and a compact transport — built as a
